@@ -17,6 +17,11 @@ function clamp(n, min, max) {
   return Math.min(max, Math.max(min, n));
 }
 
+function truncateText(text, maxLength = 20) {
+  if (!text || text.length <= maxLength) return text;
+  return text.substring(0, maxLength) + '...';
+}
+
 function runTests() {
   const a = movePoints([0, 0, 10, 10], 5, -5);
   const b = JSON.stringify(a) === JSON.stringify([5, -5, 15, 5]);
@@ -34,6 +39,7 @@ runTests();
 
 export default function App() {
   const [elements, setElements] = useState([]);
+  const [history, setHistory] = useState([]);
   const [tool, setTool] = useState("select");
   const [selectedId, setSelectedId] = useState(null);
   const [stageScale, setStageScale] = useState(1);
@@ -77,7 +83,17 @@ export default function App() {
   );
 
   function push(newEls) {
+    // Save current state to history before making changes
+    setHistory(prev => [...prev.slice(-9), elements]); // Keep last 10 states
     setElements(newEls);
+  }
+
+  function undo() {
+    if (history.length === 0) return;
+    const previousState = history[history.length - 1];
+    setHistory(prev => prev.slice(0, -1));
+    setElements(previousState);
+    setSelectedId(null);
   }
 
   function addBuilding(p) {
@@ -322,10 +338,20 @@ export default function App() {
       onWheel(e);
     };
 
+    const handleKeyDown = (e) => {
+      if (e.ctrlKey && e.key === 'z') {
+        e.preventDefault();
+        undo();
+      }
+    };
+
     svg.addEventListener("wheel", handleWheel, { passive: false });
-    return () =>
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
       svg.removeEventListener("wheel", handleWheel, { passive: false });
-  }, [stagePos, stageScale]);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [stagePos, stageScale, history]);
   return (
     <div
       className="min-h-screen w-full bg-slate-50 text-slate-800"
@@ -386,6 +412,14 @@ export default function App() {
           </button>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            className="rounded-xl bg-slate-200 px-3 py-2 text-sm disabled:opacity-40"
+            onClick={undo}
+            disabled={history.length === 0}
+            title="Undo (Ctrl+Z)"
+          >
+            ↶ Undo
+          </button>
           <button
             className="rounded-xl bg-slate-200 px-3 py-2 text-sm"
             onClick={() => setStageScale((s) => clamp(s * 0.9, 0.3, 3))}
@@ -460,27 +494,43 @@ export default function App() {
               >
                 {elements
                   .filter((e) => e.type === "road")
-                  .map((e) => (
-                    <polyline
-                      key={e.id}
-                      points={`${e.points[0]},${e.points[1]} ${e.points[2]},${e.points[3]}`}
-                      fill="none"
-                      stroke={e.stroke}
-                      strokeWidth={e.strokeWidth}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      onPointerDown={(ev) => {
-                        ev.stopPropagation();
-                        const pt = getSvgPoint(ev);
-                        if (!pt) return;
-                        startDrag(e, "move", pt);
-                      }}
-                      onClick={(ev) => {
-                        ev.stopPropagation();
-                        setSelectedId(e.id);
-                      }}
-                    />
-                  ))}
+                  .map((e) => {
+                    const midX = (e.points[0] + e.points[2]) / 2;
+                    const midY = (e.points[1] + e.points[3]) / 2;
+                    return (
+                      <g key={e.id}>
+                        <polyline
+                          points={`${e.points[0]},${e.points[1]} ${e.points[2]},${e.points[3]}`}
+                          fill="none"
+                          stroke={e.stroke}
+                          strokeWidth={e.strokeWidth}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          onPointerDown={(ev) => {
+                            ev.stopPropagation();
+                            const pt = getSvgPoint(ev);
+                            if (!pt) return;
+                            startDrag(e, "move", pt);
+                          }}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            setSelectedId(e.id);
+                          }}
+                        />
+                        <text
+                          x={midX}
+                          y={midY - 8}
+                          fontSize={12}
+                          fill="#374151"
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          pointerEvents="none"
+                        >
+                          {truncateText(e.name || "Road", 15)}
+                        </text>
+                      </g>
+                    );
+                  })}
                 {elements
                   .filter((e) => e.type === "building")
                   .map((e) => (
@@ -503,12 +553,14 @@ export default function App() {
                         }}
                       />
                       <text
-                        x={0}
+                        x={e.width / 2}
                         y={e.height + 14}
-                        fontSize={14}
+                        fontSize={12}
                         fill="#111827"
+                        textAnchor="middle"
+                        dominantBaseline="middle"
                       >
-                        {e.name || "Building"}
+                        {truncateText(e.name || "Building", Math.floor(e.width / 8))}
                       </text>
                       {selectedId === e.id && (
                         <rect
@@ -546,12 +598,14 @@ export default function App() {
                         }}
                       />
                       <text
-                        x={-e.radius}
-                        y={e.radius + 14}
-                        fontSize={14}
+                        x={0}
+                        y={e.radius + 16}
+                        fontSize={12}
                         fill="#111827"
+                        textAnchor="middle"
+                        dominantBaseline="middle"
                       >
-                        {e.name || "Business"}
+                        {truncateText(e.name || "Business", Math.floor(e.radius / 3))}
                       </text>
                       {selectedId === e.id && (
                         <circle
